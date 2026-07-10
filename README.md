@@ -159,6 +159,67 @@ memory performance.
    generate a chart — it should call Open Terminal's tools autonomously,
    and any generated images/HTML/diagrams render right in the conversation.
 
+## Web search
+
+This stack includes a self-hosted **SearXNG** metasearch container, so the
+model can search the live web without any query going through a single
+tracked provider or requiring an API key. `docker-compose.yml` already
+wires the connection (`ENABLE_RAG_WEB_SEARCH`, `RAG_WEB_SEARCH_ENGINE`,
+`SEARXNG_QUERY_URL`) — two things are still needed before it actually works.
+
+**1. Finish SearXNG's one-time config.** Its `settings.yml` is
+auto-generated on first launch and defaults to HTML-only output; Open WebUI
+needs JSON:
+```bash
+docker compose up -d searxng
+sleep 5   # let it generate ./searxng/settings.yml
+```
+Edit `./searxng/settings.yml`, find the `formats:` line under `search:`,
+and add `json`:
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+Then restart it:
+```bash
+docker compose restart searxng
+```
+Verify it's actually returning JSON before going near Open WebUI:
+```bash
+curl "http://localhost:8080/search?q=test&format=json"
+```
+(If port 8080 conflicts with something else already running, change the
+port mapping — note SearXNG isn't exposed to the host by default in this
+compose file, only reachable from `open-webui` over `agent-net`; add a
+`ports:` entry under the `searxng` service temporarily if you want to hit
+it from the Mac directly for this test.)
+
+**2. Enable Web Search as a model capability — same two-layer pattern as
+Open Terminal.** The instance-wide connection being configured is
+necessary but not sufficient, same lesson as before:
+- **Admin Settings → Settings → Web Search**: confirm it shows enabled,
+  engine `searxng`, and the query URL pointing at
+  `http://searxng:8080/search?q=<query>`.
+- **Admin Settings → Settings → Models → [pencil icon on your model] →**
+  make sure **Web Search** is checked both as a capability and under
+  **Default Features** (or toggle it on per-chat via the `+` icon in the
+  chat input bar — Web Search has a per-chat toggle, unlike Open Terminal).
+
+Web Search doesn't conflict with Open Terminal or Code Interpreter — it's
+a separate tool family, so nothing you set up earlier needs to change.
+
+**3. Context window matters here too.** Web pages often run 4,000–8,000+
+tokens; with a small `num_ctx` most of what's fetched gets truncated before
+the model ever sees it. The `32k` variant from setup step 2 is enough;
+don't go back down to anything under ~16k if you plan to use web search
+regularly.
+
+Test with something time-sensitive your model couldn't know from training
+(e.g. "what's today's date" or recent news) — if it searches and cites a
+source, it's working end to end.
+
 ## A note on model capability
 
 Open WebUI's own docs are direct about this: driving Open Terminal well

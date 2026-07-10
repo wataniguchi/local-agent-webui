@@ -10,12 +10,20 @@ services:
       # pass through Metal, so native is much faster for inference.
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - WEBUI_AUTH=True
+      # Web search via the self-hosted SearXNG container below. These set the
+      # instance-wide connection; the model still needs Web Search enabled
+      # as a capability and Default Feature — see README "Web search" section.
+      - ENABLE_RAG_WEB_SEARCH=True
+      - RAG_WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>
+      - RAG_WEB_SEARCH_RESULT_COUNT=3
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - open-webui-data:/app/backend/data
     depends_on:
       - open-terminal
+      - searxng
     networks:
       - agent-net
     restart: unless-stopped
@@ -44,6 +52,30 @@ services:
     # "reachable by my sibling container" from "reachable by the internet"
     # without extra firewall rules. See README "Restricting network access"
     # if you want the sandbox to only reach open-webui and nothing else.
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    # Self-hosted metasearch engine — aggregates results from multiple
+    # search backends without your queries going through any single
+    # tracked provider. Pulled directly as an image rather than via the
+    # searxng-docker repo, since that repo was archived at the end of May
+    # 2026 and its docker-compose setup is no longer maintained.
+    environment:
+      - BASE_URL=http://searxng:8080/
+      - INSTANCE_NAME=local-agent-searxng
+    volumes:
+      # First run auto-generates settings.yml here — you'll edit it once
+      # to enable JSON output, which Open WebUI requires. See README.
+      - ./searxng:/etc/searxng
+    networks:
+      - agent-net
+    restart: unless-stopped
+    # SearXNG needs a couple of Linux capabilities at first run to write
+    # its config; once settings.yml exists and works, you can uncomment
+    # this to drop all capabilities for a smaller attack surface:
+    # cap_drop:
+    #   - ALL
 
 networks:
   agent-net:
