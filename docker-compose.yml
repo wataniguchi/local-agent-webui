@@ -1,0 +1,55 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    environment:
+      # Ollama is expected to run NATIVELY on the Mac host (brew install ollama;
+      # ollama serve), not in Docker — Docker Desktop on Apple Silicon doesn't
+      # pass through Metal, so native is much faster for inference.
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - WEBUI_AUTH=True
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      - open-terminal
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  open-terminal:
+    image: ghcr.io/open-webui/open-terminal
+    container_name: open-terminal
+    # This is the sandbox: an isolated container with Python, Node, git, and
+    # common data-science/CLI tools pre-installed, exposed to open-webui as
+    # a set of tools (run_command, read_file, write_file, grep_search, ...)
+    # over a REST API. open-webui never runs anything itself; it calls this.
+    environment:
+      - OPEN_TERMINAL_API_KEY=${OPEN_TERMINAL_API_KEY:-changeme-generate-a-real-key}
+    volumes:
+      # Open Terminal serves files from its working directory (the user's
+      # home dir by default) — mounting your workspace here makes it both
+      # the model's sandbox AND visible/editable from the Mac side.
+      - ./workspace:/home/user
+    networks:
+      - agent-net
+    mem_limit: 6g
+    cpus: 4
+    restart: unless-stopped
+    # NOTE: on this default bridge network, open-terminal can also reach the
+    # open internet, not just open-webui — Docker doesn't distinguish
+    # "reachable by my sibling container" from "reachable by the internet"
+    # without extra firewall rules. See README "Restricting network access"
+    # if you want the sandbox to only reach open-webui and nothing else.
+
+networks:
+  agent-net:
+    driver: bridge
+
+volumes:
+  open-webui-data:
+
+

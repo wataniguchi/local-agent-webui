@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local-agent-webui.autostart</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <!-- EDIT THIS PATH to match where you actually saved the project -->
+        <string>/Users/YOUR_USERNAME/local-agent-webui/scripts/start-agent-stack.sh</string>
+    </array>
+
+    <!-- Run once when this LaunchAgent is loaded (i.e. at login) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Do NOT keep relaunching after it exits — it's a one-shot startup
+         action, not a long-running service. Docker's own restart policy
+         (restart: unless-stopped in docker-compose.yml) handles keeping
+         containers alive after that. -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/local-agent-webui.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/local-agent-webui.launchd.log</string>
+</dict>
+</plist>

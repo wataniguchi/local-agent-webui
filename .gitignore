@@ -1,0 +1,4 @@
+.env
+# keep empty workspace directory
+/workspace/*
+!/workspace/.gitkeep
