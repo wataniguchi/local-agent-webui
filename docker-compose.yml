@@ -29,7 +29,11 @@ services:
     restart: unless-stopped
 
   open-terminal:
-    image: ghcr.io/open-webui/open-terminal
+    build: ./open-terminal
+    # ^ was: image: ghcr.io/open-webui/open-terminal
+    # Now builds ./open-terminal/Dockerfile, which layers C/C++ and Java
+    # toolchains on top of the official image. If you don't need compiler
+    # support, you can revert to the plain `image:` line above.
     container_name: open-terminal
     # This is the sandbox: an isolated container with Python, Node, git, and
     # common data-science/CLI tools pre-installed, exposed to open-webui as

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.local-agent-webui.mlx-server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <!-- EDIT THIS PATH to match where you actually saved the project -->
+        <string>/Users/YOUR_USERNAME/local-agent-webui/scripts/start-mlx-server.sh</string>
+    </array>
+
+    <!-- Run at login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Unlike the docker-compose autostart plist (which is a one-shot
+         startup action), this one IS the long-running service — KeepAlive
+         tells launchd to restart mlx_lm.server automatically if it exits
+         or crashes, similar in spirit to docker-compose's
+         restart: unless-stopped for the containerized services. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/local-agent-mlx-server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/local-agent-mlx-server.log</string>
+</dict>
+</plist>

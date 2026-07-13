@@ -45,15 +45,24 @@ memory performance.
    below, and worth making sure Ollama itself is reasonably current via
    `brew upgrade ollama` if you hit issues.)
 
+   **This project uses `gemma4:26b`** — the MoE (Mixture-of-Experts)
+   variant, not the dense `31b`. It only activates ~4B parameters per token
+   despite 26B total, so it's both faster and has a smaller memory
+   footprint than the dense model (memory tracks total parameters, not
+   active ones — 26B total is simply less than 31B total). See "Faster
+   local inference" further down for the comparison if you want to try the
+   dense `31b` instead for its slightly higher ceiling on hard reasoning
+   tasks.
+
    ```bash
-   ollama pull gemma4:31b
+   ollama pull gemma4:26b
    ```
 
    Quick sanity check that tool calling actually works before wiring it
    into Open WebUI:
    ```bash
    curl http://localhost:11434/api/chat -d '{
-     "model": "gemma4:31b",
+     "model": "gemma4:26b",
      "messages": [{"role":"user","content":"What is the weather in Paris?"}],
      "tools": [{"type":"function","function":{"name":"get_weather","description":"Get weather for a location","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}}]
    }'
@@ -63,11 +72,15 @@ memory performance.
 
    Then create an extended-context variant — agentic tool-calling
    (multi-step: call a tool, read output, decide next step, repeat) needs
-   more headroom than Ollama's 4k default:
+   more headroom than Ollama's 4k default. **This project uses a 64k
+   context window** (`num_ctx 65536`) rather than the more common 32k —
+   set deliberately larger here for other purposes beyond just tool-calling
+   headroom, so don't shrink it back down to 32k on the assumption that's
+   overkill:
    ```bash
-   ollama run gemma4:31b
-   >>> /set parameter num_ctx 32768
-   >>> /save gemma4:31b-32k
+   ollama run gemma4:26b
+   >>> /set parameter num_ctx 65536
+   >>> /save gemma4:26b-64k
    >>> /bye
    ```
 
@@ -132,7 +145,7 @@ memory performance.
 
    Then, the actual attachment step (easy to miss): go to
    **Admin Settings → Settings → Models**, click the pencil/edit icon on
-   your specific model (`gemma4:31b-32k`), find the **Terminal** section,
+   your specific model (`gemma4:26b-64k`), find the **Terminal** section,
    and select the name of the Open Terminal integration you configured in
    step 7. Without this explicit per-model assignment, the model has no
    execution tool at all — connecting the integration instance-wide and
@@ -158,6 +171,51 @@ memory performance.
 9. **Start a chat.** Ask it to look at files in the workspace, run analysis,
    generate a chart — it should call Open Terminal's tools autonomously,
    and any generated images/HTML/diagrams render right in the conversation.
+
+## Adding compiler toolchains (C, Java, etc.)
+
+The official Open Terminal image ships Python and general build tools, but
+not necessarily a C compiler or a JDK — check what's actually there before
+assuming either way:
+```bash
+docker compose exec open-terminal sh -c 'which gcc make javac java; cat /etc/os-release | head -3'
+```
+
+**Quick/ephemeral option:** since `open-terminal` currently has outbound
+network access (the tradeoff described in "Restricting network access"),
+the model can just `apt-get install -y build-essential default-jdk` itself
+mid-session if asked. This works immediately but disappears the next time
+the container is recreated — fine for a one-off, not for regular use.
+
+**Persistent option (recommended if you'll use this regularly):** this
+project includes `open-terminal/Dockerfile`, which layers `build-essential`
+(gcc/g++/make) and `default-jdk` (javac/java) on top of the official image.
+`docker-compose.yml` is already set to build it instead of pulling the
+image directly. Before building, verify one assumption in the Dockerfile —
+it guesses the base image's non-root username as `user` (matching the
+`/home/user` path this project mounts `./workspace` into), but confirm it:
+```bash
+docker inspect --format='{{.Config.User}}' ghcr.io/open-webui/open-terminal:latest
+```
+If that reports something other than `user` (or nothing, meaning the image
+runs as root by default), edit the last line of `open-terminal/Dockerfile`
+to match, or remove that `USER` line entirely if it should stay root.
+
+Then build and verify:
+```bash
+docker compose up -d --build open-terminal
+docker compose exec open-terminal sh -c 'gcc --version && javac -version'
+```
+
+From there it's a normal ask in chat — e.g. "write a C program that
+computes the first 20 Fibonacci numbers, compile it with gcc, and run it"
+— and Open Terminal's `run_command` tool handles `gcc`/`javac`/`java` the
+same way it handles any other shell command.
+
+**Note on image size and rebuild time:** `build-essential` and especially
+`default-jdk` add a few hundred MB and noticeably increase how long
+`docker compose build` takes. If you only need one of C or Java, drop the
+other package from the Dockerfile to keep the image leaner.
 
 ## Web search
 
@@ -212,9 +270,9 @@ a separate tool family, so nothing you set up earlier needs to change.
 
 **3. Context window matters here too.** Web pages often run 4,000–8,000+
 tokens; with a small `num_ctx` most of what's fetched gets truncated before
-the model ever sees it. The `32k` variant from setup step 2 is enough;
-don't go back down to anything under ~16k if you plan to use web search
-regularly.
+the model ever sees it. The `64k` default from setup step 2 is comfortably
+enough; don't go back down to anything under ~16k if you plan to use web
+search regularly.
 
 Test with something time-sensitive your model couldn't know from training
 (e.g. "what's today's date" or recent news) — if it searches and cites a
@@ -304,18 +362,21 @@ If responses feel slow on a machine with plenty of unified memory to spare
 per token, not memory capacity — so the highest-leverage changes are about
 reducing active compute per token, not freeing up RAM.
 
-**1. Use an MoE (Mixture-of-Experts) variant if the model family has one.**
-Gemma 4 offers `gemma4:26b`, which only activates ~4B parameters per token
-despite 26B total — noticeably faster generation than the dense `31b`
-model, while keeping tool-calling support (native across the whole Gemma 4
-family):
+**1. This project already defaults to the MoE variant.** `gemma4:26b`
+(from setup step 2) only activates ~4B parameters per token despite 26B
+total — noticeably faster generation than the dense `31b` model, while
+keeping tool-calling support (native across the whole Gemma 4 family). If
+you want to compare against the dense model for quality on hard reasoning
+tasks, you can pull it side by side without disturbing the default:
 ```bash
-ollama pull gemma4:26b
-ollama run gemma4:26b
->>> /set parameter num_ctx 16384
->>> /save gemma4:26b-16k
+ollama pull gemma4:31b
+ollama run gemma4:31b
+>>> /set parameter num_ctx 65536
+>>> /save gemma4:31b-64k
 >>> /bye
 ```
+Both tagged variants can coexist; pick per-task in Open WebUI's model
+selector.
 
 **2. Turn on KV-cache quantization and flash attention.** Both speed up
 long-context decoding with minimal quality loss. How you set this
@@ -363,17 +424,156 @@ persistently depends on how Ollama is running:
   startup log, which typically prints the active flash-attention/KV-cache
   config on boot.
 
-**3. Don't over-provision context.** A larger `num_ctx` costs real latency
-on every single turn, not just when you need it. The `32k` variant from
-setup step 2 is there for long agentic chains; for shorter, scoped tasks a
-`16k` (or smaller) variant will respond faster. It's fine to keep both
-tagged variants around and pick per-task in Open WebUI's model selector.
+**3. On context size — this project deliberately uses 64k, not less.**
+Normally a larger `num_ctx` costs real latency on every turn, and the
+generic advice is to size it to what you actually need. Here, `64k` was
+chosen on purpose for reasons beyond just tool-calling headroom, so it's
+not a knob to reflexively turn down for speed the way it might be
+elsewhere. If a given task is latency-sensitive and doesn't need that much
+headroom, create an additional smaller-context tagged variant
+(`gemma4:26b-16k`, following the same `/save` pattern as setup step 2) and
+pick it per-task in Open WebUI's model selector, rather than changing the
+default.
 
 **Worth testing rather than assuming:** MoE models trade a bit of raw
-capability for speed. If `gemma4:26b` feels noticeably worse than
-`gemma4:31b` on your actual tasks — especially longer agentic chains — the
-dense model may still be the better choice despite being slower. Try both
-on a couple of representative tasks before committing to one.
+capability for speed. If `gemma4:26b-64k` feels noticeably worse than
+`gemma4:31b-64k` on your actual tasks — especially longer agentic chains —
+the dense model may still be the better choice despite being slower. Try
+both on a couple of representative tasks before committing to one.
+
+## Alternative: MLX backend instead of Ollama
+
+Ollama runs on llama.cpp/GGUF under the hood; **MLX** is Apple's own
+array framework built specifically for unified memory on Apple Silicon,
+and generally gets meaningfully better throughput on the same hardware —
+community benchmarks on Gemma 4 specifically back this up, though as with
+any vendor/community numbers, worth confirming on your own machine rather
+than trusting the headline figure.
+
+**This section is opt-in and unverified against this project's specific
+tool-calling setup** — test it standalone before touching Open WebUI's
+configuration. Given how much back-and-forth it took to get Open
+Terminal/Code Interpreter/web search all correctly wired to the Ollama
+backend earlier in this README, don't assume MLX's tool-calling support
+transfers cleanly without checking first.
+
+**Recommended model: `mlx-community/gemma-4-26b-a4b-it-4bit`, not the
+`31b` dense variant.** Both memory footprint and speed favor the MoE
+model here — memory footprint tracks *total* parameters, not active ones,
+and the 26B-A4B's 26B total is smaller than the 31B dense model's 31B
+total (roughly 18GB vs 20GB at 4-bit), on top of the MoE's inherent speed
+advantage from only computing through ~4B active parameters per token.
+With 128GB of unified memory neither number is tight for you — the real
+benefit of the smaller footprint is more headroom left over for KV cache
+at long context.
+
+**1. Install and test tool calling before anything else.** Use Homebrew,
+not pip — `mlx-lm` has an official formula, so this avoids needing
+`pip install --break-system-packages` (which overrides Python's own
+safety check against modifying the system Python install) and keeps
+installation consistent with how Ollama itself is already installed:
+```bash
+brew install mlx-lm
+mlx_lm.server --model mlx-community/gemma-4-26b-a4b-it-4bit --port 8081
+```
+In another terminal, the same kind of check used earlier for Ollama —
+confirm you get a `tool_calls` block back, not just plain text or an error:
+```bash
+curl http://localhost:8081/v1/chat/completions -d '{
+  "model": "mlx-community/gemma-4-26b-a4b-it-4bit",
+  "messages": [{"role":"user","content":"What is the weather in Paris?"}],
+  "tools": [{"type":"function","function":{"name":"get_weather","description":"Get weather for a location","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}}]
+}'
+```
+Double-check the exact model repo name on Hugging Face
+(`mlx-community/gemma-4-26b-a4b-it-4bit`) before relying on it — naming
+conventions across quantized community uploads aren't perfectly uniform.
+(If you'd rather use pip for some reason — e.g. needing a newer release
+than Homebrew's formula currently has — `pip install mlx-lm
+--break-system-packages` still works as a fallback.)
+
+**2. If tool calling checks out, add it to Open WebUI as a new connection**
+— don't replace the working Ollama connection outright; add MLX alongside
+it so you can compare and fall back easily:
+- **Admin Settings → Connections → Add Connection**, type **OpenAI**
+  (not Ollama — `mlx_lm.server` speaks OpenAI format, not Ollama's API)
+- Base URL: `http://host.docker.internal:8081/v1`
+- API key: anything non-empty, `mlx_lm.server` doesn't check it
+- The `gemma-4-26b-a4b-it-4bit` model should then show up in the chat
+  model picker alongside your Ollama models
+
+**3. Re-verify Open Terminal, Web Search, and Code Interpreter capability
+settings against this new model** — per-model capability/attachment
+settings (the Terminal section, Web Search toggle) are per *model entry*,
+not global, so switching backend doesn't automatically carry them over to
+the newly added MLX model. Repeat setup steps 7–9 for it.
+
+**4. Set Max Tokens explicitly — `mlx_lm.server` defaults to only 512
+tokens per response, and Open WebUI's OpenAI-connection type doesn't
+override that automatically.** This is a confirmed, real gotcha, not a
+theoretical one: `mlx_lm.server`'s own docs state `max_tokens` defaults to
+512 unless the client sets it, and testing directly against the server
+(bypassing Open WebUI) with `max_tokens: 4096` produced a complete,
+well-structured ~2,000-token response with `finish_reason: "stop"` —
+proving the model itself is fully capable, and that anything shorter
+through Open WebUI is being cut off by the unset default, not by a real
+quality gap between Ollama and MLX. Fix: **Admin Settings → Settings →
+Models → [pencil icon on the MLX model] → Advanced Parameters → Max
+Tokens**, set to `8192`.
+
+**Confirmed end to end:** with Max Tokens set to `8192`, MLX output
+matches Ollama's descriptiveness/verbosity while still running faster —
+there is no real quality tradeoff between the two backends for this model;
+the entire gap was this one unset parameter. `8192` is a comfortable
+number given the 64k context budget from setup step 2; go higher only if
+you find the model still getting cut off on especially long tasks.
+
+**Persisting `mlx_lm.server` across reboots.** This project includes a
+ready-made LaunchAgent for this, in `scripts/start-mlx-server.sh` and
+`launchagent/com.local-agent-webui.mlx-server.plist` — same pattern as the
+Docker autostart setup, with one difference: since `mlx_lm.server` has no
+external dependency to wait on (unlike the Docker script, which waits for
+the Docker daemon), this one sets `KeepAlive` true in the plist so
+`launchd` restarts the server automatically if it ever exits or crashes,
+rather than only running once at login.
+
+**Setup:**
+
+1. Edit `scripts/start-mlx-server.sh` if your model/port choice differs
+   from the defaults (`mlx-community/gemma-4-26b-a4b-it-4bit` on port
+   `8081`), and confirm `MLX_LM_BIN` matches your Homebrew install
+   location — `/opt/homebrew/bin/mlx_lm.server` on Apple Silicon,
+   `/usr/local/bin/mlx_lm.server` on Intel (check with
+   `which mlx_lm.server`).
+2. Make it executable:
+   ```bash
+   chmod +x scripts/start-mlx-server.sh
+   ```
+3. Edit `launchagent/com.local-agent-webui.mlx-server.plist` and replace
+   both instances of `YOUR_USERNAME` with your actual macOS username.
+4. Copy the plist into place and load it:
+   ```bash
+   cp launchagent/com.local-agent-webui.mlx-server.plist ~/Library/LaunchAgents/
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.local-agent-webui.mlx-server.plist
+   ```
+   (On older macOS versions without `bootstrap`, use `launchctl load
+   ~/Library/LaunchAgents/com.local-agent-webui.mlx-server.plist` instead.)
+5. Test without rebooting:
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/com.local-agent-webui.mlx-server
+   tail -f ~/Library/Logs/local-agent-mlx-server.log
+   curl http://localhost:8081/v1/models
+   ```
+
+**To remove it later:**
+```bash
+launchctl bootout gui/$(id -u)/com.local-agent-webui.mlx-server
+rm ~/Library/LaunchAgents/com.local-agent-webui.mlx-server.plist
+```
+
+If you'd rather not persist it at login at all — e.g. you only spin up MLX
+occasionally to compare against Ollama — skip this and just run
+`mlx_lm.server` manually in a terminal when you want it.
 
 ## Restricting network access
 
@@ -459,8 +659,8 @@ rely on staying put:
   ⚙️ → Default Model Metadata** instead (see step 8 above), which applies
   to base models directly.
 - **Tool calls silently do nothing**: almost always the context-window
-  issue from step 2 — confirm you're using the `-32k` tagged model, not the
-  base one, in Workspace → Models.
+  issue from step 2 — confirm you're using the `-64k` tagged model
+  (`gemma4:26b-64k`), not the base `gemma4:26b`, in the chat model picker.
 - **Open Terminal shows as disconnected**: check
   `docker compose logs open-terminal` for the API key it generated/expects,
   and confirm it matches your `.env`.
