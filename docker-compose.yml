@@ -1,3 +1,10 @@
+# Pinned explicitly rather than left to default to the directory name.
+# Compose normally derives the project name from whatever folder you happen
+# to run it from — meaning a renamed/relocated project directory silently
+# creates a SECOND, disconnected set of containers and volumes rather than
+# managing the existing ones. Pinning this avoids that trap for good.
+name: local-agent-webui
+
 services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main

@@ -244,15 +244,19 @@ Then restart it:
 ```bash
 docker compose restart searxng
 ```
-Verify it's actually returning JSON before going near Open WebUI:
+Verify it's actually returning JSON before going near Open WebUI. SearXNG
+isn't exposed to the host in this compose file — only reachable from
+`open-webui` over the internal `agent-net` network — so test it from
+inside that container rather than directly from your Mac:
 ```bash
-curl "http://localhost:8080/search?q=test&format=json"
+docker compose exec open-webui curl "http://searxng:8080/search?q=test&format=json"
 ```
-(If port 8080 conflicts with something else already running, change the
-port mapping — note SearXNG isn't exposed to the host by default in this
-compose file, only reachable from `open-webui` over `agent-net`; add a
-`ports:` entry under the `searxng` service temporarily if you want to hit
-it from the Mac directly for this test.)
+(If you'd rather test directly from your Mac, you can temporarily add a
+`ports:` entry like `"8080:8080"` under the `searxng` service in
+`docker-compose.yml`, run `docker compose up -d searxng` to apply it, then
+`curl "http://localhost:8080/search?q=test&format=json"` — just remember
+to remove that mapping afterward if you don't want SearXNG reachable from
+your LAN.)
 
 **2. Enable Web Search as a model capability — same two-layer pattern as
 Open Terminal.** The instance-wide connection being configured is
@@ -615,6 +619,28 @@ rely on staying put:
   (packages installed mid-session, temp files elsewhere in the container,
   shell state) is gone the next time the container is recreated
   (`docker compose down && up`, or a rebuild).
+
+**Renaming or relocating the project directory after the fact is a real
+trap, now fixed.** `docker-compose.yml` pins `name: local-agent-webui` at
+the top level. Without this, Compose derives its project name from
+whatever folder you happen to run it from — so renaming the project
+directory later doesn't migrate anything, it silently starts managing a
+*second*, disconnected set of containers and volumes tied to the new name,
+while the original containers (still tagged to the old folder name) keep
+running untouched under `restart: unless-stopped`. Concretely, this means:
+if you ever renamed this project's folder, your original containers didn't
+go anywhere — they're still running, still bind-mounting `./workspace` and
+`./searxng` at their *original* path, and Docker will keep silently
+re-creating that original path (even after deleting it) every time those
+containers restart at login, since Docker auto-creates a missing bind-mount
+source directory rather than failing. If you're hitting this, the fix is a
+one-time migration: tear down the old project by its original name
+(`docker compose -p <old-project-name> down`, without `-v`, to keep the
+volume), copy its named volume's data into the new pinned volume name via
+a throwaway container, then bring the stack up fresh from the correct
+directory. This preserves your Open WebUI configuration rather than losing
+it. With the project name now pinned, this specific trap can't recur even
+if you rename the folder again later.
 
 ## Safety notes
 
