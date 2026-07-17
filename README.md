@@ -124,6 +124,16 @@ memory performance.
 6. **Open `http://localhost:3000`** and create a local account (stored only
    in your own `open-webui-data` volume — nothing leaves your machine).
 
+   **No manual Ollama connection setup needed here** — unlike the MLX
+   backend covered later in this README (which does need a connection
+   added by hand), Ollama is wired in automatically via the
+   `OLLAMA_BASE_URL` environment variable already set in
+   `docker-compose.yml` (step 1). To confirm it actually took, check
+   **Admin Settings → Connections** — you should see an Ollama connection
+   already listed, pointing at `http://host.docker.internal:11434`, with
+   no action required from you. If it's missing or shows an error there,
+   see "Ollama connection failed" under Troubleshooting.
+
 7. **Connect Open Terminal to Open WebUI:**
    - Go to **Admin Settings → Integrations → Open Terminal**
    - URL: `http://open-terminal:8000` (container-to-container, via the
