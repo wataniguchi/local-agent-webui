@@ -1,4 +1,5 @@
 .env
+.DS_Store
 /searxng/*
 # keep empty workspace directory
 /workspace/*

@@ -36,33 +36,33 @@ memory performance.
 
 2. **Pull a tool-calling-capable model with an extended context window.**
 
-   **Important: use Gemma 4, not Gemma 3.** Gemma 3's chat template has no
-   tool-calling support in Ollama at all — any request with `tools` fails
-   outright with `does not support tools`, regardless of context size or
-   Modelfile settings. Gemma 4 has native function-calling built into its
-   template. (There were early reports of Ollama's tool-call parsing being
-   flaky for Gemma 4 right after its release — worth a quick sanity check
-   below, and worth making sure Ollama itself is reasonably current via
-   `brew upgrade ollama` if you hit issues.)
+   **This project uses `gpt-oss:120b`** — OpenAI's open-weight release,
+   with native agentic tool-calling as a first-class design goal (not a
+   retrofit). It's a large model: 116.83B total parameters (MoE, only
+   ~5.13B active per token), shipping natively in MXFP4 format at ~60.8GB.
+   OpenAI's own guidance is to budget **~80GB of memory** for it — a much
+   bigger footprint than the lighter Gemma 4 option below, and worth
+   planning around if you also run `mlx_lm.server` (see "Alternative: MLX
+   backend"), since loading both large models at once could get tight even
+   on 128GB of unified memory.
 
-   **This project uses `gemma4:26b`** — the MoE (Mixture-of-Experts)
-   variant, not the dense `31b`. It only activates ~4B parameters per token
-   despite 26B total, so it's both faster and has a smaller memory
-   footprint than the dense model (memory tracks total parameters, not
-   active ones — 26B total is simply less than 31B total). See "Faster
-   local inference" further down for the comparison if you want to try the
-   dense `31b` instead for its slightly higher ceiling on hard reasoning
-   tasks.
+   **Known reliability caveat, not a config issue:** there's a documented
+   Ollama issue where `gpt-oss:120b` specifically can spike memory by
+   40–50GB *during tool calls*, even when otherwise running cleanly. Given
+   this project leans hard on tool calling (Open Terminal, Web Search),
+   keep Activity Monitor open for your first few tool-calling sessions to
+   notice if this happens on your setup.
 
    ```bash
-   ollama pull gemma4:26b
+   brew upgrade ollama   # gpt-oss needs a reasonably current Ollama
+   ollama pull gpt-oss:120b
    ```
 
    Quick sanity check that tool calling actually works before wiring it
    into Open WebUI:
    ```bash
    curl http://localhost:11434/api/chat -d '{
-     "model": "gemma4:26b",
+     "model": "gpt-oss:120b",
      "messages": [{"role":"user","content":"What is the weather in Paris?"}],
      "tools": [{"type":"function","function":{"name":"get_weather","description":"Get weather for a location","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}}]
    }'
@@ -78,11 +78,28 @@ memory performance.
    headroom, so don't shrink it back down to 32k on the assumption that's
    overkill:
    ```bash
+   ollama run gpt-oss:120b
+   >>> /set parameter num_ctx 65536
+   >>> /save gpt-oss:120b-64k
+   >>> /bye
+   ```
+
+   **Lighter-weight alternative: `gemma4:26b-64k`.** If 80GB is too much
+   to dedicate to one model, or you want faster responses at the cost of
+   some capability, Gemma 4's MoE variant is a much smaller footprint
+   (~18GB) and still has solid native tool-calling support:
+   ```bash
+   ollama pull gemma4:26b
    ollama run gemma4:26b
    >>> /set parameter num_ctx 65536
    >>> /save gemma4:26b-64k
    >>> /bye
    ```
+   (Avoid Gemma 3 for this project — its chat template has no tool-calling
+   support in Ollama at all, regardless of context size or Modelfile
+   settings.) Both models can coexist and be picked per-task in Open
+   WebUI's model selector — see "Faster local inference" further down for
+   more on this tradeoff.
 
 3. **Set a real Open Terminal API key.** The `.env` file goes in the
    **project root — the same directory as `docker-compose.yml`** — not
@@ -155,7 +172,9 @@ memory performance.
 
    Then, the actual attachment step (easy to miss): go to
    **Admin Settings → Settings → Models**, click the pencil/edit icon on
-   your specific model (`gemma4:26b-64k`), find the **Terminal** section,
+   your specific model (`gpt-oss:120b-64k`, or whichever model you're
+   configuring — repeat this for every model you use), find the
+   **Terminal** section,
    and select the name of the Open Terminal integration you configured in
    step 7. Without this explicit per-model assignment, the model has no
    execution tool at all — connecting the integration instance-wide and
@@ -376,21 +395,16 @@ If responses feel slow on a machine with plenty of unified memory to spare
 per token, not memory capacity — so the highest-leverage changes are about
 reducing active compute per token, not freeing up RAM.
 
-**1. This project already defaults to the MoE variant.** `gemma4:26b`
-(from setup step 2) only activates ~4B parameters per token despite 26B
-total — noticeably faster generation than the dense `31b` model, while
-keeping tool-calling support (native across the whole Gemma 4 family). If
-you want to compare against the dense model for quality on hard reasoning
-tasks, you can pull it side by side without disturbing the default:
-```bash
-ollama pull gemma4:31b
-ollama run gemma4:31b
->>> /set parameter num_ctx 65536
->>> /save gemma4:31b-64k
->>> /bye
-```
-Both tagged variants can coexist; pick per-task in Open WebUI's model
-selector.
+**1. `gpt-oss:120b` (this project's default) is a large, high-capability
+model — the lighter `gemma4:26b-64k` alternative from setup step 2 is
+your main speed lever, not a KV-cache tweak.** `gpt-oss:120b` only
+activates ~5.13B parameters per token (MoE), but the *total* memory
+footprint (~60.8GB weights, ~80GB recommended budget) is what mainly
+governs how heavy it feels versus `gemma4:26b-64k`'s ~18GB. If responses
+feel slow or memory-constrained, switching to `gemma4:26b-64k` for a given
+task — right in Open WebUI's model selector, no need to unload/reconfigure
+anything — is the single biggest lever available, bigger than anything
+below. Both tagged variants can coexist and be picked per-task.
 
 **2. Turn on KV-cache quantization and flash attention.** Both speed up
 long-context decoding with minimal quality loss. How you set this
@@ -445,15 +459,18 @@ chosen on purpose for reasons beyond just tool-calling headroom, so it's
 not a knob to reflexively turn down for speed the way it might be
 elsewhere. If a given task is latency-sensitive and doesn't need that much
 headroom, create an additional smaller-context tagged variant
-(`gemma4:26b-16k`, following the same `/save` pattern as setup step 2) and
-pick it per-task in Open WebUI's model selector, rather than changing the
-default.
+(e.g. `gemma4:26b-16k`, following the same `/save` pattern as setup step 2)
+and pick it per-task in Open WebUI's model selector, rather than changing
+the default.
 
-**Worth testing rather than assuming:** MoE models trade a bit of raw
-capability for speed. If `gemma4:26b-64k` feels noticeably worse than
-`gemma4:31b-64k` on your actual tasks — especially longer agentic chains —
-the dense model may still be the better choice despite being slower. Try
-both on a couple of representative tasks before committing to one.
+**Worth testing rather than assuming:** `gpt-oss:120b` and `gemma4:26b`
+trade capability for speed/memory differently than a same-family MoE vs.
+dense comparison would — they're different model families entirely, with
+different strengths. If `gemma4:26b-64k` feels noticeably worse than
+`gpt-oss:120b-64k` on your actual tasks — especially longer agentic
+chains, or reasoning-heavy work — the larger model may be worth the extra
+memory and latency. Try both on a couple of representative tasks rather
+than assuming either one is strictly better.
 
 ## Alternative: MLX backend instead of Ollama
 
@@ -695,8 +712,9 @@ if you rename the folder again later.
   ⚙️ → Default Model Metadata** instead (see step 8 above), which applies
   to base models directly.
 - **Tool calls silently do nothing**: almost always the context-window
-  issue from step 2 — confirm you're using the `-64k` tagged model
-  (`gemma4:26b-64k`), not the base `gemma4:26b`, in the chat model picker.
+  issue from step 2 — confirm you're using a `-64k` tagged model
+  (`gpt-oss:120b-64k` or `gemma4:26b-64k`), not an untagged base model, in
+  the chat model picker.
 - **Open Terminal shows as disconnected**: check
   `docker compose logs open-terminal` for the API key it generated/expects,
   and confirm it matches your `.env`.
